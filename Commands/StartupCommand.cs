@@ -45,8 +45,40 @@ namespace DoEverything.Commands
                 //Geometry touches = polygons[0].Intersection(polygons[1]);
                 //var res = CalculateDimensions(touches.Length, touches.Area);
                 //Debug.WriteLine(res);
-
                 IList<Reference> select = UiDocument.Selection.PickObjects(ObjectType.Element, new DimensionSelectionFilter());
+                using Transaction tran = new(Document, "test");
+                tran.Start();
+                foreach (Reference reference in select)
+                {
+                    Dimension dimension = Document.GetElement(reference) as Dimension;
+                    foreach (Reference _reference in select)
+                    {
+                        if (reference.ElementId.Equals(_reference.ElementId)) continue;
+                        Dimension _dimension = Document.GetElement(_reference) as Dimension;
+                        Line line1 = dimension.Curve as Line;
+                        Line line2 = _dimension.Curve as Line;
+                        line1.MakeBound(0, 1000);
+                        line2.MakeBound(0, 1000);
+                        var dis = line1.Distance(line2);
+                        if (dis < 600 / 304.8)
+                        {
+                            Debug.WriteLine(dis);
+                            IList<XYZ> points = GetPointBoundingBox(dimension);
+                            Polygon polygon = CreatePolygonFromRevitPoints(points);
+                            IList<XYZ> _points = GetPointBoundingBox(_dimension);
+                            Polygon _polygon = CreatePolygonFromRevitPoints(_points);
+                            Geometry geo = polygon.Intersection(_polygon);
+
+                            var (length, width) = CalculateDimensions(geo.Length, geo.Area);
+                            if (line1.GetEndPoint(0).Y < line2.GetEndPoint(0).Y)
+                                dimension.Move(-XYZ.BasisY * (600 / 304.8 - dis));
+                            else
+                                _dimension.Move(-XYZ.BasisY * (600 / 304.8 - dis));
+                            Document.Regenerate();
+                        }
+                    }
+                }
+                tran.Commit();
                 //using Transaction tran = new(Document, "test");
                 //tran.Start();
                 //foreach (Reference reference in select)
@@ -162,7 +194,7 @@ namespace DoEverything.Commands
         {
             return new Coordinate(point.X.ToMeters(), point.Y.ToMeters());
         }
-        private Polygon CreatePolygonFromRevitPoints(List<XYZ> revitPoints)
+        private Polygon CreatePolygonFromRevitPoints(IList<XYZ> revitPoints)
         {
             var geometryFactory = NtsGeometryServices.Instance.CreateGeometryFactory();
             var coordinates = revitPoints.Select(RevitPointToNTSCoordinate).ToList();
@@ -191,16 +223,20 @@ namespace DoEverything.Commands
 
             return (length, width);
         }
-        private void CreateLine(Dimension dimension)
+        private IList<XYZ> GetPointBoundingBox(Element ele)
         {
-            BoundingBoxXYZ bounding = dimension.get_BoundingBox(ActiveView);
+            IList<XYZ> points = [];
+            BoundingBoxXYZ bounding = ele.get_BoundingBox(ActiveView);
             XYZ max = bounding.Max;
             XYZ min = bounding.Min;
 
-            Document.Create.NewDetailCurve(ActiveView, Line.CreateBound(min, new XYZ(min.X, max.Y, 0)));
-            Document.Create.NewDetailCurve(ActiveView, Line.CreateBound(new XYZ(min.X, max.Y, 0), max));
-            Document.Create.NewDetailCurve(ActiveView, Line.CreateBound(max, new XYZ(max.X, min.Y, 0)));
-            Document.Create.NewDetailCurve(ActiveView, Line.CreateBound(new XYZ(max.X, min.Y, 0), min));
+            points.Add(min);
+            points.Add(new XYZ(min.X, max.Y, 0));
+            points.Add(max);
+            points.Add(new XYZ(max.X, min.Y, 0));
+            points.Add(min);
+
+            return points;
         }
     }
 
